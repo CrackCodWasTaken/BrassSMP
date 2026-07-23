@@ -1,95 +1,127 @@
 # SINGLE URL to the mod loader
-$MOD_LOADER_URL = ""
+$MOD_LOADER_URL = "https://github.com/CrackCodWasTaken/BrassSMP/raw/refs/heads/main/ModLoader/neoforge-21.1.243-installer.jar"
 # SINGLE URL to all the mods (e.g., a direct link to a zipped pack or a specific jar)
-$MODS_URL = ""
+$MODS_URL = "https://github.com/CrackCodWasTaken/BrassSMP/raw/refs/heads/main/Mods/ModsZIP.zip"
 
 # Define the standard Windows Minecraft roaming path
 $MC_DIR = "$env:APPDATA\.minecraft"
 $VERSIONS_DIR = "$MC_DIR\versions"
+$MODS_FOLDER = Join-Path $MC_DIR "mods"
 
-# 1. Checks if Minecraft directory even exists
+# Extract the target version string directly from your URL string (e.g. "neoforge-21.1.243")
+$TargetVersionName = "neoforge-21.1.243"
+
+# Checks if Minecraft directory even exists
 if (-not (Test-Path $VERSIONS_DIR)) {
     Write-Error "Error: Minecraft versions folder not found at $VERSIONS_DIR"
     Exit
 }
-Write-Host "Minecraft Directory Found: $MC_DIR"
 
-# 2. Index all the directories inside the versions folder (Baseline)
-Write-Host "Indexing the directories inside Minecraft folder..."
-$BaselineDirs = Get-ChildItem -Path $VERSIONS_DIR -Directory | Select-Object -ExpandProperty Name | Sort-Object
+Clear-Host
+Write-Host "==============================================" -ForegroundColor Cyan
+Write-Host "      BRASS SMP UNIFIED INSTALLER & UPDATER   " -ForegroundColor Cyan
+Write-Host "==============================================" -ForegroundColor Cyan
+Write-Host " Full Install (Downloads Mod Loader + Mods)"
+Write-Host " Update Mods Only (Skips Mod Loader Install)"
+Write-Host "----------------------------------------------"
+$Choice = Read-Host "Please enter your choice (1 or 2)"
 
-# Where the JAR file gets downloaded to
-$INSTALLER_JAR = "$env:TEMP\modloader_installer.jar"
+if ($Choice -eq "1") {
+    # ==============================================================================
+    # PATH A: FULL FIRST-TIME INSTALLATION
+    # ==============================================================================
+    Write-Host "`nStarting Full Installation..." -ForegroundColor Yellow
 
-# 3. Download the mod loader from the URL provided
-Write-Host "Downloading Mod Loader..."
-Invoke-WebRequest -Uri $MOD_LOADER_URL -OutFile $INSTALLER_JAR
+    $INSTALLER_JAR = "$env:TEMP\modloader_installer.jar"
+    Write-Host "Downloading Mod Loader..."
+    Invoke-WebRequest -Uri $MOD_LOADER_URL -OutFile $INSTALLER_JAR
 
-# 4. Install the mod loader 
-Write-Host "Installing Mod Loader... Please interact with the popup installer UI if it appears."
-Start-Process java -ArgumentList "-jar `"$INSTALLER_JAR`"" -Wait
+    # FIXED: Runs Java natively via cmd execution layer to handle GUI thread binding properly
+    Write-Host "Launching NeoForge GUI Installer Window..." -ForegroundColor Cyan
+    Write-Host "CRITICAL: Make sure 'Install Client' is selected, click 'OK/Proceed', and wait for success!" -ForegroundColor Yellow
+    
+    # Executes via native command layer and securely holds code until process exits
+    cmd.exe /c "java -jar `"$INSTALLER_JAR`""
 
-# 5. Find the unindexed directory (Current vs Baseline Delta)
-Write-Host "Finding the Installed Directory..."
-$CurrentDirs = Get-ChildItem -Path $VERSIONS_DIR -Directory | Select-Object -ExpandProperty Name | Sort-Object
-
-# Compare object finds what is unique to the Current directory set
-$NewDirName = Compare-Object -ReferenceObject $BaselineDirs -DifferenceObject $CurrentDirs | 
-               Where-Object { $_.SideIndicator -eq "=>" } | 
-               Select-Object -First 1 -ExpandProperty InputObject
-
-if (-not $NewDirName) {
-    Write-Error "Error: Dynamic unindexed directory NOT found."
-    Write-Host "Cleaning up baseline files and exiting..."
+    # Hard Target: Verify if the expected version folder exists after closing
+    $NEW_DIR = Join-Path $VERSIONS_DIR $TargetVersionName
+    if (-not (Test-Path $NEW_DIR)) {
+        Write-Warning "Target directory $TargetVersionName was not detected. Scanning fallback..."
+        $NewDirName = Get-ChildItem -Path $VERSIONS_DIR -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty Name
+        $NEW_DIR = Join-Path $VERSIONS_DIR $NewDirName
+    }
+    
+    Write-Host "Successfully targeted profile version: $(Split-Path $NEW_DIR -Leaf)" -ForegroundColor Green
     Remove-Item -Path $INSTALLER_JAR -Force -ErrorAction SilentlyContinue
+
+} elseif ($Choice -eq "2") {
+    # ==============================================================================
+    # PATH B: QUICK MOD UPDATE (Lists versions dynamically)
+    # ==============================================================================
+    Write-Host "`nScanning existing Minecraft installation profiles..." -ForegroundColor Yellow
+    $ExistingVersions = Get-ChildItem -Path $VERSIONS_DIR -Directory | Select-Object -ExpandProperty Name
+    
+    if ($ExistingVersions.Count -eq 0) {
+        Write-Error "No existing versions found in your Minecraft directory! Please run a Full Install first."
+        Exit
+    }
+
+    Write-Host "`nAvailable Profiles Found:" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $ExistingVersions.Count; $i++) {
+        Write-Host "[$i] $($ExistingVersions[$i])"
+    }
+    Write-Host "----------------------------------------------"
+    
+    $Selection = Read-Host "Select the index number of your NeoForge/Fabric profile"
+    
+    if ($Selection -match '^\d+$' -and [int]$Selection -lt $ExistingVersions.Count) {
+        $NewDirName = $ExistingVersions[[int]$Selection]
+        $NEW_DIR = Join-Path $VERSIONS_DIR $NewDirName
+        Write-Host "Target locked on: $NewDirName" -ForegroundColor Green
+    } else {
+        Write-Error "Invalid selection. Exiting script."
+        Exit
+    }
+} else {
+    Write-Error "Invalid choice. Exiting script."
     Exit
 }
 
-$NEW_DIR = Join-Path $VERSIONS_DIR $NewDirName
+# ==============================================================================
+# UNIFIED DOWNLOADING & BACKUP CORE (Shared by both options)
+# ==============================================================================
+Write-Host "`nPreparing mods injection to target: $MC_DIR\mods"
+Write-Host "YOUR CURRENT MODS WILL BE BACKED UP INSIDE ANOTHER FOLDER IN THE SAME DIRECTORY."
+Write-Host "If this is okay, wait 5 seconds. Otherwise, close this window now!"
+Start-Sleep -Seconds 5
 
-Write-Host "Printing out new directory target:"
-Write-Host "$MC_DIR\mods"
-Write-Host "YOUR CURRENT MODS WILL BE SAVED INSIDE ANOTHER FOLDER IN THE SAME DIRECTORY."
-Write-Host "IF THIS IS A FOLDER YOU DO NOT WANT CHANGED OR DELETED, close this window now!"
-Write-Host "You have 10 seconds to decide..."
-Start-Sleep -Seconds 10
-
-$MODS_FOLDER = Join-Path $MC_DIR "mods"
-
-# 6. Safe Backup Logic: If the mods folder exists and contains items, rename it
+# Safe Backup Logic
 if ((Test-Path $MODS_FOLDER) -and (Get-ChildItem -Path $MODS_FOLDER)) {
     $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
     $BACKUP_NAME = "${MODS_FOLDER}_backup_$Timestamp"
-    Write-Host "Warning: Existing mods detected! Creating safety backup at: $BACKUP_NAME"
+    Write-Host "Existing mods detected! Creating safety backup at: $BACKUP_NAME" -ForegroundColor Yellow
     Rename-Item -Path $MODS_FOLDER -NewName (Split-Path $BACKUP_NAME -Leaf)
 }
 
-# 7. Create a fresh, pristine folder purely for your server mods
+# Create a clean folder purely for the server pack
 Write-Host "Creating clean mods directory..."
 $null = New-Item -ItemType Directory -Path $MODS_FOLDER -Force
-Write-Host "Mods Directory Ready: $MODS_FOLDER"
 
-# 8. Download mods directly into the target folder
-Write-Host "Downloading Mods to the mods directory..."
-# Automatically determines if the link points to a .zip file or a single .jar
-$OutputFileName = Split-Path $MODS_URL -Leaf
-if (-not $OutputFileName.EndsWith(".zip") -and -not $OutputFileName.EndsWith(".jar")) {
-    $OutputFileName = "mods.zip" # Fallback if URL hides extension
-}
-$TargetModFile = Join-Path $MODS_FOLDER $OutputFileName
-
+# Download mods from RAW GitHub Link stream
+Write-Host "Downloading Mods archive from GitHub..."
+$TargetModFile = Join-Path $MODS_FOLDER "ModsZIP.zip"
 Invoke-WebRequest -Uri $MODS_URL -OutFile $TargetModFile
 
-# 9. Automation Feature: If you downloaded a zip package, automatically extract it cleanly
-if ($OutputFileName.EndsWith(".zip")) {
-    Write-Host "Zip archive detected. Extracting mod pack..."
+# Extract mods safely
+if ((Test-Path $TargetModFile) -and ((Get-Item $TargetModFile).Length -gt 0)) {
+    Write-Host "Extracting mod pack contents..." -ForegroundColor Yellow
     Expand-Archive -Path $TargetModFile -DestinationPath $MODS_FOLDER -Force
     Remove-Item -Path $TargetModFile -Force
-    Write-Host "Extraction complete!"
+    Write-Host "Extraction complete!" -ForegroundColor Green
+} else {
+    Write-Error "Error: The downloaded mod pack archive is empty or invalid."
+    Exit
 }
 
-# 10. Clean Up temporary files
-Write-Host "Cleaning up temporary installation files..."
-Remove-Item -Path $INSTALLER_JAR -Force -ErrorAction SilentlyContinue
-Write-Host "Finished Installation successfully!"
+Write-Host "`nFinished successfully! You are ready to play on the server." -ForegroundColor Green
 Pause
